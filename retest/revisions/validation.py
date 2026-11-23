@@ -28,6 +28,14 @@ def _sequence(value: object, field: str) -> Sequence:
     return value
 
 
+def _scan(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('transition scan must be a nonblank name or None')
+    return value
+
+
 def validate_revision(draft: RevisionDraft) -> Revision:
     if not isinstance(draft, RevisionDraft) or not isinstance(draft.source, TrialSource):
         raise ValueError('a revision draft with a trial source is required')
@@ -71,7 +79,8 @@ def validate_revision(draft: RevisionDraft) -> Revision:
                 raise ValueError(f'unknown transition target {edge.target!r}')
             if type(edge.ticks) is not int or edge.ticks < 0:
                 raise ValueError('transition ticks must be nonnegative integers')
-            edges.append(Transition(edge.target, _probability(edge.probability), edge.ticks, edge.is_exit))
+            edges.append(Transition(edge.target, _probability(edge.probability), edge.ticks,
+                                    edge.is_exit, _scan(edge.scan)))
         if sum(edge.probability for edge in edges) != 1:
             raise ValueError(f'branch mass for {state!r} must sum to 1')
         rows.append((state, tuple(edges)))

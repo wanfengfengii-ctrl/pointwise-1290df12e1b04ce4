@@ -1,6 +1,7 @@
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from retest.evidence.encoding import StationScanEvidence
 from retest.wiring.intake import ReceivedEvidence
 from retest.wiring.ports import PortRef, index_public_ports, resolve_public_port
 
@@ -45,6 +46,8 @@ def build_manifest(manifest_id: str, source: str, pair: Sequence[ReceivedEvidenc
         raise ValueError('received pieces must come from distinct stations')
     if (first_origin.work_order, first_origin.round_id) != (second_origin.work_order, second_origin.round_id):
         raise ValueError('received pieces must share a work order and round')
+    if isinstance(first.evidence, StationScanEvidence) != isinstance(second.evidence, StationScanEvidence):
+        raise ValueError('received station pieces must use the same evidence version')
     entrances, exits = index_public_ports((first.evidence, second.evidence))
     routes: dict[PortRef, Destination] = {}
     try:

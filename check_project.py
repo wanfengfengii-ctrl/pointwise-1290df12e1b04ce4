@@ -1,4 +1,4 @@
-"""Run this project's full unittest suite from the repository root."""
+"""Run this project's full unittest suite and the scan fixture checks."""
 import sys
 import unittest
 
@@ -18,6 +18,12 @@ def main():
         for test in failed_cases:
             print(f'{status} {test.id()}')
     successful = result.testsRun > 0 and result.wasSuccessful()
+
+    import check_scan_fixture
+    fixture = check_scan_fixture.verify(check_scan_fixture.load_cases())
+    print('SCAN FIXTURE ' + str(len(fixture['v1'])) + ' V1 and '
+          + str(len(fixture['v2'])) + ' V2 cases verified offline')
+
     print(f'TEST SUMMARY total={result.testsRun} failures={len(result.failures)} '
           f'errors={len(result.errors)} skipped={len(result.skipped)} '
           f'expected_failures={len(result.expectedFailures)} '

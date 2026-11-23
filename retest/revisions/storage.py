@@ -13,7 +13,8 @@ def _encode(revision: Revision) -> str:
         'exits': revision.exits,
         'predecessor': revision.predecessor,
         'transitions': [
-            (state, [(edge.target, str(edge.probability), edge.ticks, edge.is_exit) for edge in edges])
+            (state, [(edge.target, str(edge.probability), edge.ticks, edge.is_exit, edge.scan)
+                     for edge in edges])
             for state, edges in revision.transitions
         ],
     }, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
@@ -21,13 +22,20 @@ def _encode(revision: Revision) -> str:
 
 def _decode(station: str, revision_id: str, body: str) -> Revision:
     payload = json.loads(body)
+    transitions = []
+    for state, edges in payload['transitions']:
+        decoded_edges = []
+        for edge in edges:
+            # Revisions stored before scan marks carry four-tuple edges.
+            target, mass, ticks, is_exit = edge[:4]
+            scan = edge[4] if len(edge) > 4 else None
+            decoded_edges.append(Transition(target, Fraction(mass), ticks, is_exit, scan))
+        transitions.append((state, tuple(decoded_edges)))
     return Revision(
         station, revision_id, TrialSource(**payload['source']),
         tuple((name, state) for name, state in payload['entries']),
         tuple(payload['exits']),
-        tuple((state, tuple(Transition(target, Fraction(mass), ticks, is_exit)
-                            for target, mass, ticks, is_exit in edges))
-              for state, edges in payload['transitions']),
+        tuple(transitions),
         payload['predecessor'],
     )
 

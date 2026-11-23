@@ -16,6 +16,7 @@ class Transition:
     probability: Fraction | int | str
     ticks: int
     is_exit: bool = False
+    scan: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,13 @@
 import sqlite3
 
-from retest.evidence.encoding import decode_evidence, encode_evidence
+from retest.evidence.encoding import (StationScanEvidence, StationEvidence, decode_evidence,
+                                      encode_evidence, encode_scan_evidence)
+
+
+def _canonical(evidence: StationEvidence | StationScanEvidence) -> str:
+    if isinstance(evidence, StationScanEvidence):
+        return encode_scan_evidence(evidence)
+    return encode_evidence(evidence)
 
 
 class EvidenceRegistry:
@@ -17,7 +24,7 @@ class EvidenceRegistry:
             raise RuntimeError('evidence registry requires an idle connection')
         value = decode_evidence(body)
         piece_id = value.piece_id
-        canonical = encode_evidence(value)
+        canonical = _canonical(value)
         with self.db:
             self.db.execute('''INSERT INTO issued_evidence VALUES (?, ?)
                 ON CONFLICT(piece_id) DO NOTHING''', (piece_id, canonical))

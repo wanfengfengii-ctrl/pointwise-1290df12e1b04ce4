@@ -5,7 +5,7 @@ from fractions import Fraction
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from retest.analysis.review import ReviewRequest, review
+from retest.analysis.review import ReviewRequest, ScanReviewRequest, review
 from retest.evidence.encoding import decode_evidence
 from retest.evidence.issue import issue
 from retest.evidence.registry import EvidenceRegistry
@@ -26,7 +26,7 @@ def _load(name: str) -> dict:
     return json.loads((EXAMPLES / name).read_text(encoding='utf-8'))
 
 
-def _install(path: Path, data: dict) -> str:
+def _install(path: Path, data: dict, *, version: int = 1) -> str:
     draft = RevisionDraft(
         data['station'], data['revision_id'], TrialSource(**data['source']),
         data['entries'], data['exits'],
@@ -38,7 +38,7 @@ def _install(path: Path, data: dict) -> str:
         revisions.initialize()
         registry.initialize()
         register(revisions, draft)
-        return issue(revisions, registry, draft.station, draft.revision_id)
+        return issue(revisions, registry, draft.station, draft.revision_id, version=version)
 
 
 def _sign(center: Path, settings: dict, bodies: tuple[str, str]) -> tuple[IssuedReport, ...]:
@@ -69,6 +69,83 @@ def _result(report: IssuedReport) -> dict:
             'revisions': [item.revision_id for item in snapshot.origins], 'receipt': report.receipt.status}
 
 
+def _scan_draft(model: dict, name: str) -> RevisionDraft:
+    rows = {
+        state: [Transition(target, probability, ticks, is_exit, scan)
+                for target, probability, ticks, is_exit, scan in edges]
+        for state, edges in model['rows'].items()
+    }
+    return RevisionDraft(model['station'], name, TrialSource('insulation-42', 'night', name),
+                         model['entries'], model['exits'], rows)
+
+
+def _install_scan(path: Path, model: dict, name: str) -> str:
+    with closing(sqlite3.connect(path)) as db:
+        revisions, registry = RevisionStore(db), EvidenceRegistry(db)
+        revisions.initialize()
+        registry.initialize()
+        register(revisions, _scan_draft(model, name))
+        return issue(revisions, registry, model['station'], name, version=2)
+
+
+def _scan_result(report: IssuedReport) -> dict:
+    snapshot = report.snapshot
+    return {
+        'id': report.report_id, 'manifest': snapshot.manifest.manifest_id,
+        'observed_through': snapshot.observed_through, 'deadline': snapshot.deadline,
+        'scans': [list(item) for item in snapshot.scans], 'support': str(snapshot.support),
+        'on_time': None if snapshot.on_time is None else str(snapshot.on_time),
+        'never_complete': None if snapshot.never_complete is None else str(snapshot.never_complete),
+        'revisions': [item.revision_id for item in snapshot.origins],
+        'piece_ids': list(snapshot.manifest.parents), 'receipt': report.receipt.status,
+    }
+
+
+def _run_scan_demo(root: Path) -> dict:
+    data = _load('scan.json')
+    a_path, b_path, center = root / 'scan-a.sqlite', root / 'scan-b.sqlite', root / 'scan-center.sqlite'
+    chosen = next(case for case in data['cases'] if case['id'] == 'fast-order')
+    zero_case = next(case for case in data['cases'] if case['id'] == 'no-support')
+    a_piece = _install_scan(a_path, data['models'][chosen['a']], chosen['a'])
+    b_piece = _install_scan(b_path, data['models']['confirmation'], 'confirmation')
+    # The stations go offline before the center binds or signs anything.
+    a_path.unlink()
+    b_path.unlink()
+    pair = (a_piece, b_piece)
+    identities = {decode_evidence(body).origin.station: decode_evidence(body).piece_id for body in pair}
+
+    def routes(case):
+        return [(PortRef(identities[src[0]], src[1]),
+                 None if dst is None else PortRef(identities[dst[0]], dst[1]))
+                for src, dst in data['wiring'][case['wiring']]]
+
+    with closing(sqlite3.connect(center)) as db:
+        manifests, ledger = ManifestStore(db), ReportLedger(db)
+        manifests.initialize()
+        ledger.initialize()
+        bind(manifests, chosen['id'], 'night routing card', pair, routes(chosen))
+        bind(manifests, zero_case['id'], 'night routing card', pair, routes(zero_case))
+        request = ScanReviewRequest(
+            chosen['id'], PortRef(identities['A'], 'in'), chosen['c'],
+            tuple((tick, name) for tick, name in chosen['scans']), chosen['d'])
+        signed = review(manifests, ledger, request)
+        zero_request = ScanReviewRequest(
+            zero_case['id'], PortRef(identities['A'], 'in'), zero_case['c'],
+            tuple((tick, name) for tick, name in zero_case['scans']), zero_case['d'])
+        zero_signed = review(manifests, ledger, zero_request)
+        signed_id, zero_id = signed.report_id, zero_signed.report_id
+    # Reopen the center with the station libraries still absent.
+    with closing(sqlite3.connect(center)) as db:
+        ledger = ReportLedger(db)
+        ledger.initialize()
+        retrieved = get(ledger, signed_id)
+        zero_retrieved = get(ledger, zero_id)
+    if retrieved != signed or zero_retrieved != zero_signed:
+        raise RuntimeError('offline scan report retrieval does not match the signed report')
+    return {'signed': _scan_result(signed), 'zero_support': _scan_result(zero_signed),
+            'retrieved_by_id': signed_id}
+
+
 def main() -> None:
     day = _load('day.json')
     correction = _load('correction.json')
@@ -91,9 +168,11 @@ def main() -> None:
                 or any(item.snapshot.never_complete for item in (*initial, *updated))
                 or retrieved != initial):
             raise RuntimeError('demo calculation or report retrieval does not match the sample')
+        scan_demo = _run_scan_demo(root)
         print(json.dumps({'initial': [_result(report) for report in initial],
                           'corrected': [_result(report) for report in updated],
-                          'retrieved': [_result(report) for report in retrieved]}, ensure_ascii=False, sort_keys=True))
+                          'retrieved': [_result(report) for report in retrieved],
+                          'scan_window': scan_demo}, ensure_ascii=False, sort_keys=True))
 
 
 if __name__ == '__main__':
